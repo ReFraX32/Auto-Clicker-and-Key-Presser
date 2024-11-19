@@ -1,8 +1,7 @@
 # AutoClicker and Key Presser
-![Auto Clicker Preview](https://github.com/user-attachments/assets/a5e4b105-85ca-47b1-8e30-ecee1665263b)
-
-
 An AutoClicker and Key Presser application built with Java, leveraging the JNativeHook library for global keyboard and mouse event handling, and Swing for the graphical user interface.
+
+![Auto Clicker Preview](https://github.com/user-attachments/assets/a5e4b105-85ca-47b1-8e30-ecee1665263b)
 
 ## Features
 
