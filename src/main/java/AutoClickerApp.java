@@ -4,6 +4,7 @@ import javax.swing.border.TitledBorder;
 import java.awt.*;
 import java.awt.event.*;
 import java.util.HashSet;
+import java.util.Objects;
 import java.util.Set;
 import java.util.prefs.Preferences;
 import java.util.stream.Collectors;
@@ -20,14 +21,14 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
     private JTextField keyField;
     private JTextField hourField, minuteField, secondField, millisecondField;
     private JTextField shortcutField;
-    private JButton startStopButton, saveConfigButton;
+    private JButton startStopButton;
     private JLabel statusLabel;
     private JPanel keyPanel;
 
-    private Preferences prefs;
+    private final Preferences prefs;
     private Robot robot;
     private Timer clickTimer;
-    private Set<Integer> shortcutKeys = new HashSet<>();
+    private final Set<Integer> shortcutKeys = new HashSet<>();
     private boolean isRecordingShortcut = false;
     private boolean isRecordingKey = false;
     private boolean isRunning = false;
@@ -44,7 +45,7 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
             Logger logger = Logger.getLogger(GlobalScreen.class.getPackage().getName());
             logger.setLevel(Level.OFF);
             logger.setUseParentHandlers(false);
-            
+
             GlobalScreen.registerNativeHook();
             GlobalScreen.addNativeKeyListener(this);
         } catch (NativeHookException ex) {
@@ -59,13 +60,13 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
             robot = new Robot();
         } catch (AWTException e) {
             e.printStackTrace();
+            JOptionPane.showMessageDialog(this, "Failed to initialize Robot: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            System.exit(1);
         }
 
         setupUI();
         loadConfiguration();
     }
-
-
 
     private void setupUI() {
         JPanel mainPanel = new JPanel();
@@ -111,10 +112,10 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
         addVerticalSpace(mainPanel, 15);
 
         JPanel intervalPanel = createStyledPanel("Interval");
-        hourField = createStyledNumericField("0", 4);
-        minuteField = createStyledNumericField("0", 4);
-        secondField = createStyledNumericField("1", 4);
-        millisecondField = createStyledNumericField("0", 4);
+        hourField = createStyledNumericField("0");
+        minuteField = createStyledNumericField("0");
+        secondField = createStyledNumericField("1");
+        millisecondField = createStyledNumericField("0");
 
         intervalPanel.add(createIntervalComponent(hourField, "Hours"));
         intervalPanel.add(createIntervalComponent(minuteField, "Minutes"));
@@ -146,7 +147,7 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 0));
         buttonPanel.setOpaque(false);
         startStopButton = createStyledButton("Start");
-        saveConfigButton = createStyledButton("Save Configuration");
+        JButton saveConfigButton = createStyledButton("Save Configuration");
 
         startStopButton.addActionListener(e -> toggleAction());
         saveConfigButton.addActionListener(e -> saveConfiguration());
@@ -155,6 +156,19 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
         buttonPanel.add(saveConfigButton);
         mainPanel.add(buttonPanel);
 
+        JPanel gradientPanel = getJPanel();
+        gradientPanel.add(mainPanel, BorderLayout.CENTER);
+
+        add(gradientPanel, BorderLayout.CENTER);
+        updateActionOptions();
+
+        UIManager.put("ComboBox.background", new Color(28, 28, 30));
+        UIManager.put("ComboBox.foreground", Color.WHITE);
+        UIManager.put("ComboBox.selectionBackground", new Color(45, 45, 47));
+        UIManager.put("ComboBox.selectionForeground", Color.WHITE);
+    }
+
+    private static JPanel getJPanel() {
         JPanel gradientPanel = new JPanel() {
             @Override
             protected void paintComponent(Graphics g) {
@@ -171,20 +185,17 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
             }
         };
         gradientPanel.setLayout(new BorderLayout());
-        gradientPanel.add(mainPanel, BorderLayout.CENTER);
-
-        add(gradientPanel, BorderLayout.CENTER);
-        updateActionOptions();
+        return gradientPanel;
     }
 
     private JPanel createIntervalComponent(JTextField field, String label) {
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
         panel.setOpaque(false);
-        
+
         JLabel timeLabel = new JLabel(label);
         timeLabel.setForeground(Color.WHITE);
         timeLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
-        
+
         panel.add(field);
         panel.add(Box.createHorizontalStrut(5));
         panel.add(timeLabel);
@@ -223,7 +234,6 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
             public Component getListCellRendererComponent(JList list, Object value,
                                                           int index, boolean isSelected, boolean cellHasFocus) {
                 Component c = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
-
                 if (isSelected) {
                     setBackground(new Color(45, 45, 47));
                     setForeground(Color.WHITE);
@@ -231,10 +241,23 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
                     setBackground(new Color(28, 28, 30));
                     setForeground(Color.WHITE);
                 }
-
                 return c;
             }
         });
+
+        Object popupObj = comboBox.getUI().getAccessibleChild(comboBox, 0);
+        if (popupObj instanceof JPopupMenu popup) {
+            popup.setBackground(new Color(28, 28, 30));
+            popup.setBorder(BorderFactory.createLineBorder(new Color(85, 85, 85)));
+        }
+
+        Component[] comps = comboBox.getComponents();
+        for (Component comp : comps) {
+            if (comp instanceof JButton button) {
+                button.setBackground(new Color(28, 28, 30));
+                button.setForeground(Color.WHITE);
+            }
+        }
     }
 
     private void styleTextField(JTextField textField) {
@@ -244,14 +267,14 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
         textField.setForeground(Color.WHITE);
         textField.setCaretColor(Color.WHITE);
         textField.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(new Color(70, 70, 70)),
-            BorderFactory.createEmptyBorder(5, 10, 5, 10)
+                BorderFactory.createLineBorder(new Color(70, 70, 70)),
+                BorderFactory.createEmptyBorder(5, 10, 5, 10)
         ));
         textField.setHorizontalAlignment(JTextField.CENTER);
     }
 
-    private JTextField createStyledNumericField(String initialText, int columns) {
-        JTextField field = new JTextField(initialText, columns);
+    private JTextField createStyledNumericField(String initialText) {
+        JTextField field = new JTextField(initialText, 4);
         styleTextField(field);
         field.addKeyListener(new KeyAdapter() {
             @Override
@@ -265,7 +288,7 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
         field.addFocusListener(new FocusAdapter() {
             @Override
             public void focusGained(FocusEvent e) {
-                SwingUtilities.invokeLater(() -> field.selectAll());
+                SwingUtilities.invokeLater(field::selectAll);
             }
         });
         return field;
@@ -280,7 +303,7 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
         button.setFocusPainted(false);
         button.setBorderPainted(false);
         button.setCursor(new Cursor(Cursor.HAND_CURSOR));
-        
+
         button.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseEntered(MouseEvent e) {
@@ -300,14 +323,18 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
             keyField.setText("Press any key...");
             keyField.requestFocusInWindow();
 
-            keyField.addKeyListener(new KeyAdapter() {
+            KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(new KeyEventDispatcher() {
                 @Override
-                public void keyPressed(KeyEvent e) {
-                    if (isRecordingKey) {
-                        keyField.setText(KeyEvent.getKeyText(e.getKeyCode()));
+                public boolean dispatchKeyEvent(KeyEvent e) {
+                    if (isRecordingKey && e.getID() == KeyEvent.KEY_PRESSED) {
+                        String keyText = KeyEvent.getKeyText(e.getKeyCode());
+                        keyField.setText(keyText);
                         isRecordingKey = false;
-                        keyField.removeKeyListener(this);
+                        KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(this);
+                        e.consume();
+                        return true;
                     }
+                    return false;
                 }
             });
         }
@@ -317,6 +344,36 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
         isRecordingShortcut = true;
         shortcutKeys.clear();
         shortcutField.setText("Press key combination...");
+
+        KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(new KeyEventDispatcher() {
+            @Override
+            public boolean dispatchKeyEvent(KeyEvent e) {
+                if (isRecordingShortcut && e.getID() == KeyEvent.KEY_PRESSED) {
+                    Set<Integer> currentKeys = new HashSet<>();
+                    if (e.isControlDown()) currentKeys.add(KeyEvent.VK_CONTROL);
+                    if (e.isShiftDown()) currentKeys.add(KeyEvent.VK_SHIFT);
+                    if (e.isAltDown()) currentKeys.add(KeyEvent.VK_ALT);
+                    currentKeys.add(e.getKeyCode());
+
+                    shortcutKeys.clear();
+                    shortcutKeys.addAll(currentKeys);
+
+                    String shortcutText = shortcutKeys.stream()
+                            .map(KeyEvent::getKeyText)
+                            .collect(Collectors.joining(" + "));
+
+                    SwingUtilities.invokeLater(() -> {
+                        shortcutField.setText(shortcutText);
+                        isRecordingShortcut = false;
+                    });
+
+                    KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(this);
+                    e.consume();
+                    return true;
+                }
+                return false;
+            }
+        });
     }
 
     private void toggleAction() {
@@ -324,7 +381,7 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
         startStopButton.setText(isRunning ? "Stop" : "Start");
         statusLabel.setText("Status: " + (isRunning ? "Running" : "Stopped"));
         statusLabel.setForeground(isRunning ? new Color(82, 196, 26) : new Color(255, 69, 58));
-        
+
         if (isRunning) {
             int interval = calculateIntervalMilliseconds();
             clickTimer = new Timer(interval, e -> performAction());
@@ -348,9 +405,9 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
         String actionType = (String) actionTypeComboBox.getSelectedItem();
         if ("Click".equals(actionType)) {
             int clickType = InputEvent.BUTTON1_DOWN_MASK;
-            if (clickTypeComboBox.getSelectedItem().equals("Middle Click")) {
+            if (Objects.equals(clickTypeComboBox.getSelectedItem(), "Middle Click")) {
                 clickType = InputEvent.BUTTON2_DOWN_MASK;
-            } else if (clickTypeComboBox.getSelectedItem().equals("Right Click")) {
+            } else if (Objects.equals(clickTypeComboBox.getSelectedItem(), "Right Click")) {
                 clickType = InputEvent.BUTTON3_DOWN_MASK;
             }
             robot.mousePress(clickType);
@@ -359,16 +416,38 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
         } else if ("Key Press".equals(actionType)) {
             String keyText = keyField.getText();
             if (!keyText.isEmpty() && !keyText.equals("Click to set key") && !keyText.equals("Press any key...")) {
-                try {
-                    int keyCode = KeyEvent.getExtendedKeyCodeForChar(keyText.charAt(0));
+                int keyCode = getKeyCode(keyText);
+                if (keyCode != -1) {
                     robot.keyPress(keyCode);
                     robot.delay(50);
                     robot.keyRelease(keyCode);
-                } catch (IllegalArgumentException e) {
+                } else {
                     System.err.println("Invalid key: " + keyText);
                 }
             }
         }
+    }
+
+    private int getKeyCode(String keyText) {
+        return switch (keyText.toLowerCase()) {
+            case "space" -> KeyEvent.VK_SPACE;
+            case "enter" -> KeyEvent.VK_ENTER;
+            case "tab" -> KeyEvent.VK_TAB;
+            case "backspace" -> KeyEvent.VK_BACK_SPACE;
+            case "escape" -> KeyEvent.VK_ESCAPE;
+            default -> {
+                if (keyText.toLowerCase().startsWith("f") && keyText.length() > 1) {
+                    try {
+                        int functionKeyNumber = Integer.parseInt(keyText.substring(1));
+                        if (functionKeyNumber >= 1 && functionKeyNumber <= 12) {
+                            yield KeyEvent.VK_F1 + functionKeyNumber - 1;
+                        }
+                    } catch (NumberFormatException ignored) {
+                    }
+                }
+                yield KeyEvent.getExtendedKeyCodeForChar(keyText.charAt(0));
+            }
+        };
     }
 
     private void updateActionOptions() {
@@ -386,18 +465,19 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
         prefs.put("interval_milliseconds", millisecondField.getText());
         prefs.put("action_type", (String) actionTypeComboBox.getSelectedItem());
         prefs.put("shortcut", shortcutField.getText());
-        
+
         StringBuilder shortcutKeysStr = new StringBuilder();
         for (Integer key : shortcutKeys) {
             shortcutKeysStr.append(key).append(",");
         }
         prefs.put("shortcut_keys", shortcutKeysStr.toString());
-        
+        prefs.put("key_to_press", keyField.getText());
+
         JOptionPane.showMessageDialog(
-            this,
-            "Configuration saved successfully!",
-            "Success",
-            JOptionPane.INFORMATION_MESSAGE
+                this,
+                "Configuration saved successfully!",
+                "Success",
+                JOptionPane.INFORMATION_MESSAGE
         );
     }
 
@@ -408,7 +488,7 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
         millisecondField.setText(prefs.get("interval_milliseconds", "0"));
         actionTypeComboBox.setSelectedItem(prefs.get("action_type", "Click"));
         shortcutField.setText(prefs.get("shortcut", ""));
-        
+
         String shortcutKeysStr = prefs.get("shortcut_keys", "");
         shortcutKeys.clear();
         if (!shortcutKeysStr.isEmpty()) {
@@ -420,52 +500,14 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
                 }
             }
         }
-        
+        keyField.setText(prefs.get("key_to_press", "Click to set key"));
         updateActionOptions();
     }
 
     @Override
     public void nativeKeyPressed(NativeKeyEvent e) {
-        if (isRecordingShortcut) {
-            Set<Integer> currentKeys = new HashSet<>();
-
-            int modifiers = e.getModifiers();
-            if ((modifiers & NativeKeyEvent.CTRL_MASK) != 0) currentKeys.add(KeyEvent.VK_CONTROL);
-            if ((modifiers & NativeKeyEvent.SHIFT_MASK) != 0) currentKeys.add(KeyEvent.VK_SHIFT);
-            if ((modifiers & NativeKeyEvent.ALT_MASK) != 0) currentKeys.add(KeyEvent.VK_ALT);
-
-            int keyCode = e.getKeyCode();
-            int awtKeyCode = convertToAWTKeyCode(keyCode);
-            if (awtKeyCode != -1 && awtKeyCode != KeyEvent.VK_CONTROL
-                    && awtKeyCode != KeyEvent.VK_SHIFT && awtKeyCode != KeyEvent.VK_ALT) {
-                currentKeys.add(awtKeyCode);
-            }
-
-            if (!currentKeys.isEmpty()) {
-                shortcutKeys.clear();
-                shortcutKeys.addAll(currentKeys);
-
-                String shortcutText = shortcutKeys.stream()
-                        .map(key -> KeyEvent.getKeyText(key))
-                        .collect(Collectors.joining(" + "));
-
-                SwingUtilities.invokeLater(() -> {
-                    shortcutField.setText(shortcutText);
-                    isRecordingShortcut = false;
-                });
-            }
-        } else if (!shortcutKeys.isEmpty()) {
-            Set<Integer> currentKeys = new HashSet<>();
-
-            int modifiers = e.getModifiers();
-            if ((modifiers & NativeKeyEvent.CTRL_MASK) != 0) currentKeys.add(KeyEvent.VK_CONTROL);
-            if ((modifiers & NativeKeyEvent.SHIFT_MASK) != 0) currentKeys.add(KeyEvent.VK_SHIFT);
-            if ((modifiers & NativeKeyEvent.ALT_MASK) != 0) currentKeys.add(KeyEvent.VK_ALT);
-
-            int awtKeyCode = convertToAWTKeyCode(e.getKeyCode());
-            if (awtKeyCode != -1) {
-                currentKeys.add(awtKeyCode);
-            }
+        if (!isRecordingShortcut && !shortcutKeys.isEmpty()) {
+            Set<Integer> currentKeys = getKeys(e);
 
             if (currentKeys.equals(shortcutKeys)) {
                 SwingUtilities.invokeLater(this::toggleAction);
@@ -473,73 +515,81 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
         }
     }
 
+    private Set<Integer> getKeys(NativeKeyEvent e) {
+        Set<Integer> currentKeys = new HashSet<>();
 
+        int modifiers = e.getModifiers();
+        if ((modifiers & NativeKeyEvent.CTRL_MASK) != 0) currentKeys.add(KeyEvent.VK_CONTROL);
+        if ((modifiers & NativeKeyEvent.SHIFT_MASK) != 0) currentKeys.add(KeyEvent.VK_SHIFT);
+        if ((modifiers & NativeKeyEvent.ALT_MASK) != 0) currentKeys.add(KeyEvent.VK_ALT);
+
+        int awtKeyCode = convertToAWTKeyCode(e.getKeyCode());
+        if (awtKeyCode != -1) {
+            currentKeys.add(awtKeyCode);
+        }
+        return currentKeys;
+    }
 
     private int convertToAWTKeyCode(int nativeKeyCode) {
-        switch (nativeKeyCode) {
-            // Letters
-            case NativeKeyEvent.VC_A: return KeyEvent.VK_A;
-            case NativeKeyEvent.VC_B: return KeyEvent.VK_B;
-            case NativeKeyEvent.VC_C: return KeyEvent.VK_C;
-            case NativeKeyEvent.VC_D: return KeyEvent.VK_D;
-            case NativeKeyEvent.VC_E: return KeyEvent.VK_E;
-            case NativeKeyEvent.VC_F: return KeyEvent.VK_F;
-            case NativeKeyEvent.VC_G: return KeyEvent.VK_G;
-            case NativeKeyEvent.VC_H: return KeyEvent.VK_H;
-            case NativeKeyEvent.VC_I: return KeyEvent.VK_I;
-            case NativeKeyEvent.VC_J: return KeyEvent.VK_J;
-            case NativeKeyEvent.VC_K: return KeyEvent.VK_K;
-            case NativeKeyEvent.VC_L: return KeyEvent.VK_L;
-            case NativeKeyEvent.VC_M: return KeyEvent.VK_M;
-            case NativeKeyEvent.VC_N: return KeyEvent.VK_N;
-            case NativeKeyEvent.VC_O: return KeyEvent.VK_O;
-            case NativeKeyEvent.VC_P: return KeyEvent.VK_P;
-            case NativeKeyEvent.VC_Q: return KeyEvent.VK_Q;
-            case NativeKeyEvent.VC_R: return KeyEvent.VK_R;
-            case NativeKeyEvent.VC_S: return KeyEvent.VK_S;
-            case NativeKeyEvent.VC_T: return KeyEvent.VK_T;
-            case NativeKeyEvent.VC_U: return KeyEvent.VK_U;
-            case NativeKeyEvent.VC_V: return KeyEvent.VK_V;
-            case NativeKeyEvent.VC_W: return KeyEvent.VK_W;
-            case NativeKeyEvent.VC_X: return KeyEvent.VK_X;
-            case NativeKeyEvent.VC_Y: return KeyEvent.VK_Y;
-            case NativeKeyEvent.VC_Z: return KeyEvent.VK_Z;
+        return switch (nativeKeyCode) {
+            case NativeKeyEvent.VC_A -> KeyEvent.VK_A;
+            case NativeKeyEvent.VC_B -> KeyEvent.VK_B;
+            case NativeKeyEvent.VC_C -> KeyEvent.VK_C;
+            case NativeKeyEvent.VC_D -> KeyEvent.VK_D;
+            case NativeKeyEvent.VC_E -> KeyEvent.VK_E;
+            case NativeKeyEvent.VC_F -> KeyEvent.VK_F;
+            case NativeKeyEvent.VC_G -> KeyEvent.VK_G;
+            case NativeKeyEvent.VC_H -> KeyEvent.VK_H;
+            case NativeKeyEvent.VC_I -> KeyEvent.VK_I;
+            case NativeKeyEvent.VC_J -> KeyEvent.VK_J;
+            case NativeKeyEvent.VC_K -> KeyEvent.VK_K;
+            case NativeKeyEvent.VC_L -> KeyEvent.VK_L;
+            case NativeKeyEvent.VC_M -> KeyEvent.VK_M;
+            case NativeKeyEvent.VC_N -> KeyEvent.VK_N;
+            case NativeKeyEvent.VC_O -> KeyEvent.VK_O;
+            case NativeKeyEvent.VC_P -> KeyEvent.VK_P;
+            case NativeKeyEvent.VC_Q -> KeyEvent.VK_Q;
+            case NativeKeyEvent.VC_R -> KeyEvent.VK_R;
+            case NativeKeyEvent.VC_S -> KeyEvent.VK_S;
+            case NativeKeyEvent.VC_T -> KeyEvent.VK_T;
+            case NativeKeyEvent.VC_U -> KeyEvent.VK_U;
+            case NativeKeyEvent.VC_V -> KeyEvent.VK_V;
+            case NativeKeyEvent.VC_W -> KeyEvent.VK_W;
+            case NativeKeyEvent.VC_X -> KeyEvent.VK_X;
+            case NativeKeyEvent.VC_Y -> KeyEvent.VK_Y;
+            case NativeKeyEvent.VC_Z -> KeyEvent.VK_Z;
 
-            // Function keys
-            case NativeKeyEvent.VC_F1: return KeyEvent.VK_F1;
-            case NativeKeyEvent.VC_F2: return KeyEvent.VK_F2;
-            case NativeKeyEvent.VC_F3: return KeyEvent.VK_F3;
-            case NativeKeyEvent.VC_F4: return KeyEvent.VK_F4;
-            case NativeKeyEvent.VC_F5: return KeyEvent.VK_F5;
-            case NativeKeyEvent.VC_F6: return KeyEvent.VK_F6;
-            case NativeKeyEvent.VC_F7: return KeyEvent.VK_F7;
-            case NativeKeyEvent.VC_F8: return KeyEvent.VK_F8;
-            case NativeKeyEvent.VC_F9: return KeyEvent.VK_F9;
-            case NativeKeyEvent.VC_F10: return KeyEvent.VK_F10;
-            case NativeKeyEvent.VC_F11: return KeyEvent.VK_F11;
-            case NativeKeyEvent.VC_F12: return KeyEvent.VK_F12;
+            case NativeKeyEvent.VC_F1 -> KeyEvent.VK_F1;
+            case NativeKeyEvent.VC_F2 -> KeyEvent.VK_F2;
+            case NativeKeyEvent.VC_F3 -> KeyEvent.VK_F3;
+            case NativeKeyEvent.VC_F4 -> KeyEvent.VK_F4;
+            case NativeKeyEvent.VC_F5 -> KeyEvent.VK_F5;
+            case NativeKeyEvent.VC_F6 -> KeyEvent.VK_F6;
+            case NativeKeyEvent.VC_F7 -> KeyEvent.VK_F7;
+            case NativeKeyEvent.VC_F8 -> KeyEvent.VK_F8;
+            case NativeKeyEvent.VC_F9 -> KeyEvent.VK_F9;
+            case NativeKeyEvent.VC_F10 -> KeyEvent.VK_F10;
+            case NativeKeyEvent.VC_F11 -> KeyEvent.VK_F11;
+            case NativeKeyEvent.VC_F12 -> KeyEvent.VK_F12;
 
-            // Other common keys
-            case NativeKeyEvent.VC_ESCAPE: return KeyEvent.VK_ESCAPE;
-            case NativeKeyEvent.VC_ENTER: return KeyEvent.VK_ENTER;
-            case NativeKeyEvent.VC_SPACE: return KeyEvent.VK_SPACE;
-            case NativeKeyEvent.VC_TAB: return KeyEvent.VK_TAB;
-            case NativeKeyEvent.VC_BACKSPACE: return KeyEvent.VK_BACK_SPACE;
+            case NativeKeyEvent.VC_ESCAPE -> KeyEvent.VK_ESCAPE;
+            case NativeKeyEvent.VC_ENTER -> KeyEvent.VK_ENTER;
+            case NativeKeyEvent.VC_SPACE -> KeyEvent.VK_SPACE;
+            case NativeKeyEvent.VC_TAB -> KeyEvent.VK_TAB;
+            case NativeKeyEvent.VC_BACKSPACE -> KeyEvent.VK_BACK_SPACE;
 
-            // Numbers
-            case NativeKeyEvent.VC_1: return KeyEvent.VK_1;
-            case NativeKeyEvent.VC_2: return KeyEvent.VK_2;
-            case NativeKeyEvent.VC_3: return KeyEvent.VK_3;
-            case NativeKeyEvent.VC_4: return KeyEvent.VK_4;
-            case NativeKeyEvent.VC_5: return KeyEvent.VK_5;
-            case NativeKeyEvent.VC_6: return KeyEvent.VK_6;
-            case NativeKeyEvent.VC_7: return KeyEvent.VK_7;
-            case NativeKeyEvent.VC_8: return KeyEvent.VK_8;
-            case NativeKeyEvent.VC_9: return KeyEvent.VK_9;
-            case NativeKeyEvent.VC_0: return KeyEvent.VK_0;
-
-            default: return -1;
-        }
+            case NativeKeyEvent.VC_1 -> KeyEvent.VK_1;
+            case NativeKeyEvent.VC_2 -> KeyEvent.VK_2;
+            case NativeKeyEvent.VC_3 -> KeyEvent.VK_3;
+            case NativeKeyEvent.VC_4 -> KeyEvent.VK_4;
+            case NativeKeyEvent.VC_5 -> KeyEvent.VK_5;
+            case NativeKeyEvent.VC_6 -> KeyEvent.VK_6;
+            case NativeKeyEvent.VC_7 -> KeyEvent.VK_7;
+            case NativeKeyEvent.VC_8 -> KeyEvent.VK_8;
+            case NativeKeyEvent.VC_9 -> KeyEvent.VK_9;
+            case NativeKeyEvent.VC_0 -> KeyEvent.VK_0;
+            default -> -1;
+        };
     }
 
     public static void main(String[] args) {
@@ -552,7 +602,7 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
         } catch (Exception e) {
             e.printStackTrace();
         }
-        
+
         SwingUtilities.invokeLater(() -> {
             AutoClickerApp app = new AutoClickerApp();
             app.setLocationRelativeTo(null);
