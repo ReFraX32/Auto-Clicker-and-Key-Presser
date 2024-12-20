@@ -327,7 +327,8 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
                 @Override
                 public boolean dispatchKeyEvent(KeyEvent e) {
                     if (isRecordingKey && e.getID() == KeyEvent.KEY_PRESSED) {
-                        String keyText = KeyEvent.getKeyText(e.getKeyCode());
+                        // Instead of using KeyEvent.getKeyText, we'll use our own mapping
+                        String keyText = getStandardizedKeyText(e.getKeyCode());
                         keyField.setText(keyText);
                         isRecordingKey = false;
                         KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(this);
@@ -429,14 +430,32 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
     }
 
     private int getKeyCode(String keyText) {
-        return switch (keyText.toLowerCase()) {
-            case "space" -> KeyEvent.VK_SPACE;
-            case "enter" -> KeyEvent.VK_ENTER;
-            case "tab" -> KeyEvent.VK_TAB;
-            case "backspace" -> KeyEvent.VK_BACK_SPACE;
-            case "escape" -> KeyEvent.VK_ESCAPE;
+        return switch (keyText) {
+            case "Space" -> KeyEvent.VK_SPACE;
+            case "Enter" -> KeyEvent.VK_ENTER;
+            case "Tab" -> KeyEvent.VK_TAB;
+            case "Backspace" -> KeyEvent.VK_BACK_SPACE;
+            case "Escape" -> KeyEvent.VK_ESCAPE;
+            case "Delete" -> KeyEvent.VK_DELETE;
+            case "Up" -> KeyEvent.VK_UP;
+            case "Down" -> KeyEvent.VK_DOWN;
+            case "Left" -> KeyEvent.VK_LEFT;
+            case "Right" -> KeyEvent.VK_RIGHT;
+            case "Home" -> KeyEvent.VK_HOME;
+            case "End" -> KeyEvent.VK_END;
+            case "Page Up" -> KeyEvent.VK_PAGE_UP;
+            case "Page Down" -> KeyEvent.VK_PAGE_DOWN;
+            case "Insert" -> KeyEvent.VK_INSERT;
+            case "Control" -> KeyEvent.VK_CONTROL;
+            case "Alt" -> KeyEvent.VK_ALT;
+            case "Shift" -> KeyEvent.VK_SHIFT;
+            case "Caps Lock" -> KeyEvent.VK_CAPS_LOCK;
+            case "Num Lock" -> KeyEvent.VK_NUM_LOCK;
+            case "Scroll Lock" -> KeyEvent.VK_SCROLL_LOCK;
+            case "Pause" -> KeyEvent.VK_PAUSE;
+            case "Print Screen" -> KeyEvent.VK_PRINTSCREEN;
             default -> {
-                if (keyText.toLowerCase().startsWith("f") && keyText.length() > 1) {
+                if (keyText.startsWith("F") && keyText.length() > 1) {
                     try {
                         int functionKeyNumber = Integer.parseInt(keyText.substring(1));
                         if (functionKeyNumber >= 1 && functionKeyNumber <= 12) {
@@ -445,7 +464,16 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
                     } catch (NumberFormatException ignored) {
                     }
                 }
-                yield KeyEvent.getExtendedKeyCodeForChar(keyText.charAt(0));
+                // For single characters (letters and numbers)
+                if (keyText.length() == 1) {
+                    char c = keyText.charAt(0);
+                    if (Character.isLetter(c)) {
+                        yield KeyEvent.VK_A + (Character.toUpperCase(c) - 'A');
+                    } else if (Character.isDigit(c)) {
+                        yield KeyEvent.VK_0 + (c - '0');
+                    }
+                }
+                yield -1;
             }
         };
     }
@@ -608,5 +636,54 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
             app.setLocationRelativeTo(null);
             app.setVisible(true);
         });
+    }
+    private String getStandardizedKeyText(int keyCode) {
+        return switch (keyCode) {
+            case KeyEvent.VK_SPACE -> "Space";
+            case KeyEvent.VK_ENTER -> "Enter";
+            case KeyEvent.VK_TAB -> "Tab";
+            case KeyEvent.VK_BACK_SPACE -> "Backspace";
+            case KeyEvent.VK_ESCAPE -> "Escape";
+            case KeyEvent.VK_DELETE -> "Delete";
+            case KeyEvent.VK_UP -> "Up";
+            case KeyEvent.VK_DOWN -> "Down";
+            case KeyEvent.VK_LEFT -> "Left";
+            case KeyEvent.VK_RIGHT -> "Right";
+            case KeyEvent.VK_HOME -> "Home";
+            case KeyEvent.VK_END -> "End";
+            case KeyEvent.VK_PAGE_UP -> "Page Up";
+            case KeyEvent.VK_PAGE_DOWN -> "Page Down";
+            case KeyEvent.VK_INSERT -> "Insert";
+            case KeyEvent.VK_F1 -> "F1";
+            case KeyEvent.VK_F2 -> "F2";
+            case KeyEvent.VK_F3 -> "F3";
+            case KeyEvent.VK_F4 -> "F4";
+            case KeyEvent.VK_F5 -> "F5";
+            case KeyEvent.VK_F6 -> "F6";
+            case KeyEvent.VK_F7 -> "F7";
+            case KeyEvent.VK_F8 -> "F8";
+            case KeyEvent.VK_F9 -> "F9";
+            case KeyEvent.VK_F10 -> "F10";
+            case KeyEvent.VK_F11 -> "F11";
+            case KeyEvent.VK_F12 -> "F12";
+            case KeyEvent.VK_CONTROL -> "Control";
+            case KeyEvent.VK_ALT -> "Alt";
+            case KeyEvent.VK_SHIFT -> "Shift";
+            case KeyEvent.VK_CAPS_LOCK -> "Caps Lock";
+            case KeyEvent.VK_NUM_LOCK -> "Num Lock";
+            case KeyEvent.VK_SCROLL_LOCK -> "Scroll Lock";
+            case KeyEvent.VK_PAUSE -> "Pause";
+            case KeyEvent.VK_PRINTSCREEN -> "Print Screen";
+            default -> {
+                // For regular letters and numbers, use a fixed mapping
+                if (keyCode >= KeyEvent.VK_A && keyCode <= KeyEvent.VK_Z) {
+                    yield String.valueOf((char) (keyCode));
+                } else if (keyCode >= KeyEvent.VK_0 && keyCode <= KeyEvent.VK_9) {
+                    yield String.valueOf((char) ('0' + (keyCode - KeyEvent.VK_0)));
+                } else {
+                    yield "Unknown";
+                }
+            }
+        };
     }
 }
