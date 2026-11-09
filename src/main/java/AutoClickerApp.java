@@ -1,13 +1,22 @@
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.border.TitledBorder;
+import javax.swing.plaf.basic.BasicComboBoxUI;
+import javax.swing.plaf.basic.BasicMenuItemUI;
+import javax.swing.plaf.basic.BasicPopupMenuUI;
 import java.awt.*;
 import java.awt.event.*;
+import java.awt.geom.Area;
+import java.awt.geom.Ellipse2D;
+import java.awt.geom.Path2D;
+import java.io.InputStream;
+import java.net.URL;
 import java.util.HashSet;
-import java.util.Objects;
+import java.util.Locale;
 import java.util.Set;
 import java.util.prefs.Preferences;
 import java.util.stream.Collectors;
+import javax.imageio.ImageIO;
 import com.github.kwhat.jnativehook.GlobalScreen;
 import com.github.kwhat.jnativehook.NativeHookException;
 import com.github.kwhat.jnativehook.keyboard.NativeKeyEvent;
@@ -19,135 +28,326 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
     private JComboBox<String> actionTypeComboBox;
     private JComboBox<String> clickTypeComboBox;
     private JTextField keyField;
+    private JTextField holdHourField, holdMinuteField, holdSecondField, holdMillisecondField;
     private JTextField hourField, minuteField, secondField, millisecondField;
     private JTextField shortcutField;
     private JButton startStopButton;
+    private JButton saveConfigButton;
+    private JButton setShortcutButton;
+    private JButton settingsButton;
     private JLabel statusLabel;
-    private JPanel keyPanel;
+    private JPanel actionDetailPanel;
+    private JPanel holdPanel;
+    private JPanel holdPanelWrapper;
+    private JCheckBox holdCheckBox;
+
+    // Titled borders for dynamic localization
+    private TitledBorder actionPanelBorder;
+    private TitledBorder actionDetailBorder;
+    private TitledBorder holdPanelBorder;
+    private TitledBorder intervalPanelBorder;
+    private TitledBorder shortcutPanelBorder;
+
+    // Time unit labels for localization
+    private JLabel holdHourLabel, holdMinuteLabel, holdSecondLabel, holdMillisecondLabel;
+    private JLabel hourLabel, minuteLabel, secondLabel, millisecondLabel;
 
     private final Preferences prefs;
     private Robot robot;
-    private Timer clickTimer;
+    private Thread actionThread;
+    private volatile int activeMousePress = -1;
+    private volatile int activeKeyPress = -1;
     private final Set<Integer> shortcutKeys = new HashSet<>();
     private boolean isRecordingShortcut = false;
     private boolean isRecordingKey = false;
-    private boolean isRunning = false;
+    private volatile boolean isRunning = false;
+    private String currentLanguage = "en";
 
     public AutoClickerApp() {
-        setTitle("Auto Clicker/Key Presser");
-        setSize(700, 700);
-        setMinimumSize(new Dimension(700, 700));
+        this(createRobotSafely(), true);
+    }
+
+    AutoClickerApp(Robot robot, boolean initNativeHook) {
+        this.robot = robot;
+        prefs = Preferences.userRoot().node(this.getClass().getName());
+        currentLanguage = detectInitialLanguage();
+
+        setTitle(isSpanish() ? "Auto Clicker / Pulsador de Teclas" : "Auto Clicker/Key Presser");
+        setSize(700, 660);
+        setMinimumSize(new Dimension(700, 620));
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout());
         getContentPane().setBackground(new Color(28, 28, 30));
 
-        try {
-            Logger logger = Logger.getLogger(GlobalScreen.class.getPackage().getName());
-            logger.setLevel(Level.OFF);
-            logger.setUseParentHandlers(false);
+        loadAppIcon();
 
-            GlobalScreen.registerNativeHook();
-            GlobalScreen.addNativeKeyListener(this);
-        } catch (NativeHookException ex) {
-            System.err.println("There was a problem registering the native hook.");
-            System.err.println(ex.getMessage());
-            System.exit(1);
-        }
+        if (initNativeHook) {
+            try {
+                Logger logger = Logger.getLogger(GlobalScreen.class.getPackage().getName());
+                logger.setLevel(Level.OFF);
+                logger.setUseParentHandlers(false);
 
-        prefs = Preferences.userRoot().node(this.getClass().getName());
-
-        try {
-            robot = new Robot();
-        } catch (AWTException e) {
-            e.printStackTrace();
-            JOptionPane.showMessageDialog(this, "Failed to initialize Robot: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
-            System.exit(1);
+                GlobalScreen.registerNativeHook();
+                GlobalScreen.addNativeKeyListener(this);
+            } catch (NativeHookException ex) {
+                System.err.println("There was a problem registering the native hook.");
+                System.err.println(ex.getMessage());
+                System.exit(1);
+            }
         }
 
         setupUI();
         loadConfiguration();
+
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                stopAction();
+                if (initNativeHook) {
+                    try {
+                        GlobalScreen.unregisterNativeHook();
+                    } catch (NativeHookException ignored) {
+                    }
+                }
+            }
+        });
+    }
+
+    private void loadAppIcon() {
+        try {
+            URL iconUrl = getClass().getResource("/icon.png");
+            if (iconUrl != null) {
+                Image icon = ImageIO.read(iconUrl);
+                if (icon != null) {
+                    setIconImage(icon);
+                }
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static Robot createRobotSafely() {
+        if (GraphicsEnvironment.isHeadless()) {
+            return null;
+        }
+        try {
+            return new Robot();
+        } catch (AWTException e) {
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(null, "Failed to initialize Robot: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            System.exit(1);
+            return null;
+        }
+    }
+
+    private String detectInitialLanguage() {
+        String saved = prefs.get("language", null);
+        if (saved != null && (saved.equals("en") || saved.equals("es"))) {
+            return saved;
+        }
+        String sysLang = Locale.getDefault().getLanguage().toLowerCase();
+        if (sysLang.startsWith("es")) {
+            return "es";
+        }
+        return "en";
+    }
+
+    public boolean isSpanish() {
+        return "es".equals(currentLanguage);
+    }
+
+    public String getCurrentLanguage() {
+        return currentLanguage;
+    }
+
+    public void setLanguage(String lang) {
+        if (!"en".equals(lang) && !"es".equals(lang)) {
+            lang = "en";
+        }
+        this.currentLanguage = lang;
+        prefs.put("language", lang);
+        applyLanguage();
     }
 
     private void setupUI() {
         JPanel mainPanel = new JPanel();
         mainPanel.setLayout(new BoxLayout(mainPanel, BoxLayout.Y_AXIS));
-        mainPanel.setBorder(new EmptyBorder(25, 25, 25, 25));
+        mainPanel.setBorder(new EmptyBorder(15, 25, 20, 25));
         mainPanel.setBackground(new Color(28, 28, 30));
 
-        JLabel titleLabel = new JLabel("Auto Clicker/Key Presser");
-        titleLabel.setFont(new Font("Segoe UI", Font.BOLD, 24));
-        titleLabel.setForeground(Color.WHITE);
-        titleLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
-        mainPanel.add(titleLabel);
-        addVerticalSpace(mainPanel, 20);
+        // Top bar with Settings Cog icon in the top right (removed redundant title text)
+        JPanel topBar = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        topBar.setOpaque(false);
+        topBar.setMaximumSize(new Dimension(Integer.MAX_VALUE, 36));
+        topBar.setAlignmentX(Component.CENTER_ALIGNMENT);
 
-        JPanel actionPanel = createStyledPanel("Action Type");
-        actionTypeComboBox = new JComboBox<>(new String[]{"Click", "Key Press"});
+        settingsButton = new JButton(new CogIcon(20));
+        settingsButton.setPreferredSize(new Dimension(36, 36));
+        settingsButton.setBackground(new Color(28, 28, 30));
+        settingsButton.setForeground(new Color(200, 200, 200));
+        settingsButton.setFocusPainted(false);
+        settingsButton.setBorderPainted(false);
+        settingsButton.setContentAreaFilled(false);
+        settingsButton.setOpaque(false);
+        settingsButton.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        settingsButton.setToolTipText(isSpanish() ? "Idioma" : "Language");
+        settingsButton.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseEntered(MouseEvent e) {
+                settingsButton.setForeground(Color.WHITE);
+            }
+            @Override
+            public void mouseExited(MouseEvent e) {
+                settingsButton.setForeground(new Color(200, 200, 200));
+            }
+        });
+        settingsButton.addActionListener(e -> showLanguageMenu(settingsButton));
+
+        topBar.add(settingsButton);
+        mainPanel.add(topBar);
+        addVerticalSpace(mainPanel, 10);
+
+        // 1. Action Type Panel with Hold Checkbox on the right
+        JPanel actionPanel = createStyledPanel(isSpanish() ? "Tipo de Acción" : "Action Type");
+        actionPanelBorder = (TitledBorder) actionPanel.getBorder();
+        actionPanel.setLayout(new BorderLayout(15, 0));
+        actionPanel.setBorder(BorderFactory.createCompoundBorder(
+                actionPanelBorder,
+                BorderFactory.createEmptyBorder(0, 15, 0, 15)
+        ));
+
+        actionTypeComboBox = new JComboBox<>(getActionTypeItems());
         styleComboBox(actionTypeComboBox);
         actionTypeComboBox.addActionListener(e -> updateActionOptions());
-        actionPanel.add(actionTypeComboBox);
+
+        JPanel actionLeft = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 8));
+        actionLeft.setOpaque(false);
+        actionLeft.add(actionTypeComboBox);
+
+        holdCheckBox = new JCheckBox(isSpanish() ? "Mantener" : "Hold");
+        holdCheckBox.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        holdCheckBox.setForeground(Color.WHITE);
+        holdCheckBox.setOpaque(false);
+        holdCheckBox.setFocusPainted(false);
+        holdCheckBox.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        holdCheckBox.addActionListener(e -> {
+            boolean enabled = holdCheckBox.isSelected();
+            holdPanelWrapper.setVisible(enabled);
+            revalidate();
+            repaint();
+        });
+
+        JPanel actionRight = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 12));
+        actionRight.setOpaque(false);
+        actionRight.add(holdCheckBox);
+
+        actionPanel.add(actionLeft, BorderLayout.WEST);
+        actionPanel.add(actionRight, BorderLayout.EAST);
         mainPanel.add(actionPanel);
-        addVerticalSpace(mainPanel, 15);
+        addVerticalSpace(mainPanel, 12);
 
-        clickTypeComboBox = new JComboBox<>(new String[]{"Left Click", "Middle Click", "Right Click"});
+        // 2. Single Action Detail Panel (switches between Click Type and Key to Press without shifting size)
+        actionDetailPanel = createStyledPanel(isSpanish() ? "Tipo de Click" : "Click Type");
+        actionDetailBorder = (TitledBorder) actionDetailPanel.getBorder();
+
+        clickTypeComboBox = new JComboBox<>(getClickTypeItems());
         styleComboBox(clickTypeComboBox);
-        JPanel clickPanel = createStyledPanel("Click Type");
-        clickPanel.add(clickTypeComboBox);
-        mainPanel.add(clickPanel);
-        addVerticalSpace(mainPanel, 15);
 
-        keyPanel = createStyledPanel("Key to Press");
         keyField = new JTextField(15);
         styleTextField(keyField);
         keyField.setEditable(false);
-        keyField.setText("Click to set key");
+        keyField.setText(isSpanish() ? "Click para asignar tecla" : "Click to set key");
         keyField.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
                 startKeyRecording();
             }
         });
-        keyPanel.add(keyField);
-        mainPanel.add(keyPanel);
-        addVerticalSpace(mainPanel, 15);
+        keyField.setVisible(false); // Initially hidden, clickTypeComboBox is shown
 
-        JPanel intervalPanel = createStyledPanel("Interval");
+        actionDetailPanel.add(clickTypeComboBox);
+        actionDetailPanel.add(keyField);
+        mainPanel.add(actionDetailPanel);
+        addVerticalSpace(mainPanel, 12);
+
+        // 3. Hold Panel (wrapped so it collapses cleanly when hold is OFF)
+        holdPanelWrapper = new JPanel();
+        holdPanelWrapper.setLayout(new BoxLayout(holdPanelWrapper, BoxLayout.Y_AXIS));
+        holdPanelWrapper.setOpaque(false);
+        holdPanelWrapper.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        holdPanel = createStyledPanel(isSpanish() ? "Mantener" : "Hold");
+        holdPanelBorder = (TitledBorder) holdPanel.getBorder();
+        holdHourField = createStyledNumericField("0");
+        holdMinuteField = createStyledNumericField("0");
+        holdSecondField = createStyledNumericField("0");
+        holdMillisecondField = createStyledNumericField("0");
+
+        holdHourLabel = new JLabel(isSpanish() ? "Horas" : "Hours");
+        holdMinuteLabel = new JLabel(isSpanish() ? "Minutos" : "Minutes");
+        holdSecondLabel = new JLabel(isSpanish() ? "Segundos" : "Seconds");
+        holdMillisecondLabel = new JLabel(isSpanish() ? "Milisegundos" : "Milliseconds");
+
+        holdPanel.add(createIntervalComponentWithLabel(holdHourField, holdHourLabel));
+        holdPanel.add(createIntervalComponentWithLabel(holdMinuteField, holdMinuteLabel));
+        holdPanel.add(createIntervalComponentWithLabel(holdSecondField, holdSecondLabel));
+        holdPanel.add(createIntervalComponentWithLabel(holdMillisecondField, holdMillisecondLabel));
+
+        holdPanelWrapper.add(holdPanel);
+        holdPanelWrapper.add(Box.createRigidArea(new Dimension(0, 12)));
+        holdPanelWrapper.setVisible(false); // Collapsed by default unless enabled
+        mainPanel.add(holdPanelWrapper);
+
+        // 4. Interval Panel
+        JPanel intervalPanel = createStyledPanel(isSpanish() ? "Intervalo" : "Interval");
+        intervalPanelBorder = (TitledBorder) intervalPanel.getBorder();
         hourField = createStyledNumericField("0");
         minuteField = createStyledNumericField("0");
         secondField = createStyledNumericField("1");
         millisecondField = createStyledNumericField("0");
 
-        intervalPanel.add(createIntervalComponent(hourField, "Hours"));
-        intervalPanel.add(createIntervalComponent(minuteField, "Minutes"));
-        intervalPanel.add(createIntervalComponent(secondField, "Seconds"));
-        intervalPanel.add(createIntervalComponent(millisecondField, "Milliseconds"));
-        mainPanel.add(intervalPanel);
-        addVerticalSpace(mainPanel, 15);
+        hourLabel = new JLabel(isSpanish() ? "Horas" : "Hours");
+        minuteLabel = new JLabel(isSpanish() ? "Minutos" : "Minutes");
+        secondLabel = new JLabel(isSpanish() ? "Segundos" : "Seconds");
+        millisecondLabel = new JLabel(isSpanish() ? "Milisegundos" : "Milliseconds");
 
-        JPanel shortcutPanel = createStyledPanel("Shortcut Key");
+        intervalPanel.add(createIntervalComponentWithLabel(hourField, hourLabel));
+        intervalPanel.add(createIntervalComponentWithLabel(minuteField, minuteLabel));
+        intervalPanel.add(createIntervalComponentWithLabel(secondField, secondLabel));
+        intervalPanel.add(createIntervalComponentWithLabel(millisecondField, millisecondLabel));
+        mainPanel.add(intervalPanel);
+        addVerticalSpace(mainPanel, 12);
+
+        // 5. Shortcut Key Panel
+        JPanel shortcutPanel = createStyledPanel(isSpanish() ? "Tecla de Acceso Rápido" : "Shortcut Key");
+        shortcutPanelBorder = (TitledBorder) shortcutPanel.getBorder();
         shortcutField = new JTextField(20);
         styleTextField(shortcutField);
         shortcutField.setEditable(false);
-        shortcutField.setText("Click 'Set Shortcut' to bind");
-        JButton setShortcutButton = createStyledButton("Set Shortcut");
+        shortcutField.setText(isSpanish() ? "Click en 'Asignar' para vincular" : "Click 'Set Shortcut' to bind");
+        setShortcutButton = createStyledButton(isSpanish() ? "Asignar Acceso Rápido" : "Set Shortcut");
         setShortcutButton.addActionListener(e -> recordShortcut());
         shortcutPanel.add(shortcutField);
         shortcutPanel.add(Box.createHorizontalStrut(10));
         shortcutPanel.add(setShortcutButton);
         mainPanel.add(shortcutPanel);
-        addVerticalSpace(mainPanel, 20);
+        addVerticalSpace(mainPanel, 15);
 
-        statusLabel = new JLabel("Status: Stopped");
+        // Status Label
+        statusLabel = new JLabel(isSpanish() ? "Estado: Detenido" : "Status: Stopped");
         statusLabel.setFont(new Font("Segoe UI", Font.BOLD, 14));
         statusLabel.setForeground(new Color(255, 69, 58));
         statusLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
         mainPanel.add(statusLabel);
-        addVerticalSpace(mainPanel, 20);
+        addVerticalSpace(mainPanel, 15);
 
+        // Control Buttons
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 0));
         buttonPanel.setOpaque(false);
-        startStopButton = createStyledButton("Start");
-        JButton saveConfigButton = createStyledButton("Save Configuration");
+        buttonPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 45));
+        buttonPanel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        startStopButton = createStyledButton(isSpanish() ? "Iniciar" : "Start");
+        saveConfigButton = createStyledButton(isSpanish() ? "Guardar Configuración" : "Save Configuration");
 
         startStopButton.addActionListener(e -> toggleAction());
         saveConfigButton.addActionListener(e -> saveConfiguration());
@@ -156,16 +356,154 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
         buttonPanel.add(saveConfigButton);
         mainPanel.add(buttonPanel);
 
+        mainPanel.add(Box.createVerticalGlue());
+
         JPanel gradientPanel = getJPanel();
         gradientPanel.add(mainPanel, BorderLayout.CENTER);
 
         add(gradientPanel, BorderLayout.CENTER);
         updateActionOptions();
 
-        UIManager.put("ComboBox.background", new Color(28, 28, 30));
+        UIManager.put("ComboBox.background", new Color(45, 45, 47));
         UIManager.put("ComboBox.foreground", Color.WHITE);
-        UIManager.put("ComboBox.selectionBackground", new Color(45, 45, 47));
+        UIManager.put("ComboBox.selectionBackground", new Color(0, 122, 255));
         UIManager.put("ComboBox.selectionForeground", Color.WHITE);
+    }
+
+    private void showLanguageMenu(Component invoker) {
+        JPopupMenu menu = new JPopupMenu();
+        menu.setUI(new BasicPopupMenuUI());
+        menu.setBackground(new Color(36, 36, 38));
+        menu.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(75, 75, 75), 1),
+                BorderFactory.createEmptyBorder(4, 4, 4, 4)
+        ));
+
+        JLabel headerLabel = new JLabel(isSpanish() ? "  Idioma" : "  Language");
+        headerLabel.setFont(new Font("Segoe UI", Font.BOLD, 11));
+        headerLabel.setForeground(new Color(150, 150, 150));
+        headerLabel.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
+        menu.add(headerLabel);
+
+        JSeparator sep = new JSeparator();
+        sep.setForeground(new Color(60, 60, 60));
+        sep.setBackground(new Color(36, 36, 38));
+        menu.add(sep);
+
+        boolean es = isSpanish();
+        JMenuItem enItem = createStyledMenuItem("English", !es);
+        JMenuItem esItem = createStyledMenuItem("Español", es);
+
+        enItem.addActionListener(e -> setLanguage("en"));
+        esItem.addActionListener(e -> setLanguage("es"));
+
+        menu.add(enItem);
+        menu.add(esItem);
+
+        int menuWidth = 140;
+        menu.setPreferredSize(new Dimension(menuWidth, menu.getPreferredSize().height));
+        int x = invoker.getWidth() - menuWidth;
+        menu.show(invoker, x, invoker.getHeight() + 4);
+    }
+
+    private JMenuItem createStyledMenuItem(String text, boolean isSelected) {
+        JMenuItem item = new JMenuItem(text, new CheckIcon(isSelected));
+        item.setIconTextGap(8);
+        item.setFont(new Font("Segoe UI", isSelected ? Font.BOLD : Font.PLAIN, 12));
+        item.setForeground(Color.WHITE);
+        item.setBackground(new Color(36, 36, 38));
+        item.setOpaque(true);
+        item.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        item.setBorder(BorderFactory.createEmptyBorder(6, 10, 6, 12));
+
+        item.setUI(new BasicMenuItemUI() {
+            @Override
+            protected void paintBackground(Graphics g, JMenuItem menuItem, Color defaultColor) {
+                ButtonModel model = menuItem.getModel();
+                if (model.isArmed() || model.isRollover()) {
+                    g.setColor(new Color(0, 122, 255));
+                } else {
+                    g.setColor(new Color(36, 36, 38));
+                }
+                g.fillRect(0, 0, menuItem.getWidth(), menuItem.getHeight());
+            }
+        });
+
+        return item;
+    }
+
+    private void applyLanguage() {
+        boolean es = isSpanish();
+
+        setTitle(es ? "Auto Clicker / Pulsador de Teclas" : "Auto Clicker/Key Presser");
+
+        if (actionPanelBorder != null) actionPanelBorder.setTitle(es ? "Tipo de Acción" : "Action Type");
+        if (holdPanelBorder != null) holdPanelBorder.setTitle(es ? "Mantener" : "Hold");
+        if (intervalPanelBorder != null) intervalPanelBorder.setTitle(es ? "Intervalo" : "Interval");
+        if (shortcutPanelBorder != null) shortcutPanelBorder.setTitle(es ? "Tecla de Acceso Rápido" : "Shortcut Key");
+
+        if (holdCheckBox != null) holdCheckBox.setText(es ? "Mantener" : "Hold");
+
+        if (holdHourLabel != null) holdHourLabel.setText(es ? "Horas" : "Hours");
+        if (holdMinuteLabel != null) holdMinuteLabel.setText(es ? "Minutos" : "Minutes");
+        if (holdSecondLabel != null) holdSecondLabel.setText(es ? "Segundos" : "Seconds");
+        if (holdMillisecondLabel != null) holdMillisecondLabel.setText(es ? "Milisegundos" : "Milliseconds");
+
+        if (hourLabel != null) hourLabel.setText(es ? "Horas" : "Hours");
+        if (minuteLabel != null) minuteLabel.setText(es ? "Minutos" : "Minutes");
+        if (secondLabel != null) secondLabel.setText(es ? "Segundos" : "Seconds");
+        if (millisecondLabel != null) millisecondLabel.setText(es ? "Milisegundos" : "Milliseconds");
+
+        if (setShortcutButton != null) setShortcutButton.setText(es ? "Asignar Acceso Rápido" : "Set Shortcut");
+        if (saveConfigButton != null) saveConfigButton.setText(es ? "Guardar Configuración" : "Save Configuration");
+        if (settingsButton != null) settingsButton.setToolTipText(es ? "Idioma" : "Language");
+
+        if (startStopButton != null) {
+            startStopButton.setText(isRunning ? (es ? "Detener" : "Stop") : (es ? "Iniciar" : "Start"));
+        }
+        if (statusLabel != null) {
+            statusLabel.setText(isRunning ? (es ? "Estado: En ejecución" : "Status: Running") : (es ? "Estado: Detenido" : "Status: Stopped"));
+        }
+
+        if (keyField != null) {
+            String kt = keyField.getText();
+            if (kt.equals("Click to set key") || kt.equals("Click para asignar tecla")) {
+                keyField.setText(es ? "Click para asignar tecla" : "Click to set key");
+            }
+        }
+        if (shortcutField != null) {
+            String st = shortcutField.getText();
+            if (st.equals("Click 'Set Shortcut' to bind") || st.equals("Click en 'Asignar' para vincular")) {
+                shortcutField.setText(es ? "Click en 'Asignar' para vincular" : "Click 'Set Shortcut' to bind");
+            }
+        }
+
+        if (actionTypeComboBox != null) {
+            int selectedIdx = actionTypeComboBox.getSelectedIndex();
+            actionTypeComboBox.setModel(new DefaultComboBoxModel<>(getActionTypeItems()));
+            if (selectedIdx >= 0 && selectedIdx < actionTypeComboBox.getItemCount()) {
+                actionTypeComboBox.setSelectedIndex(selectedIdx);
+            }
+        }
+        if (clickTypeComboBox != null) {
+            int selectedIdx = clickTypeComboBox.getSelectedIndex();
+            clickTypeComboBox.setModel(new DefaultComboBoxModel<>(getClickTypeItems()));
+            if (selectedIdx >= 0 && selectedIdx < clickTypeComboBox.getItemCount()) {
+                clickTypeComboBox.setSelectedIndex(selectedIdx);
+            }
+        }
+
+        updateActionOptions();
+        revalidate();
+        repaint();
+    }
+
+    private String[] getActionTypeItems() {
+        return isSpanish() ? new String[]{"Click", "Pulsación de Tecla"} : new String[]{"Click", "Key Press"};
+    }
+
+    private String[] getClickTypeItems() {
+        return isSpanish() ? new String[]{"Click Izquierdo", "Click Central", "Click Derecho"} : new String[]{"Left Click", "Middle Click", "Right Click"};
     }
 
     private static JPanel getJPanel() {
@@ -188,17 +526,16 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
         return gradientPanel;
     }
 
-    private JPanel createIntervalComponent(JTextField field, String label) {
+    private JPanel createIntervalComponentWithLabel(JTextField field, JLabel label) {
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
         panel.setOpaque(false);
 
-        JLabel timeLabel = new JLabel(label);
-        timeLabel.setForeground(Color.WHITE);
-        timeLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        label.setForeground(Color.WHITE);
+        label.setFont(new Font("Segoe UI", Font.PLAIN, 12));
 
         panel.add(field);
         panel.add(Box.createHorizontalStrut(5));
-        panel.add(timeLabel);
+        panel.add(label);
         return panel;
     }
 
@@ -207,7 +544,7 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
     }
 
     private JPanel createStyledPanel(String title) {
-        JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 15, 15));
+        JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 15, 10));
 
         panel.setBorder(BorderFactory.createTitledBorder(
                 BorderFactory.createLineBorder(new Color(85, 85, 85)),
@@ -219,45 +556,76 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
         ));
 
         panel.setBackground(new Color(28, 28, 30));
+        panel.setPreferredSize(new Dimension(650, 75));
+        panel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 75));
+        panel.setMinimumSize(new Dimension(600, 75));
+        panel.setAlignmentX(Component.CENTER_ALIGNMENT);
 
         return panel;
     }
 
-    private void styleComboBox(JComboBox comboBox) {
+    private void styleComboBox(JComboBox<String> comboBox) {
         comboBox.setPreferredSize(new Dimension(200, 35));
         comboBox.setFont(new Font("Segoe UI", Font.PLAIN, 12));
-        comboBox.setBackground(new Color(28, 28, 30));
-        comboBox.setForeground(Color.BLACK);
+        comboBox.setBackground(new Color(45, 45, 47));
+        comboBox.setForeground(Color.WHITE);
 
-        comboBox.setRenderer(new DefaultListCellRenderer() {
+        comboBox.setUI(new BasicComboBoxUI() {
             @Override
-            public Component getListCellRendererComponent(JList list, Object value,
-                                                          int index, boolean isSelected, boolean cellHasFocus) {
-                Component c = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
-                if (isSelected) {
-                    setBackground(new Color(45, 45, 47));
-                    setForeground(Color.WHITE);
-                } else {
-                    setBackground(new Color(28, 28, 30));
-                    setForeground(Color.WHITE);
-                }
-                return c;
+            protected JButton createArrowButton() {
+                JButton button = new JButton() {
+                    @Override
+                    protected void paintComponent(Graphics g) {
+                        Graphics2D g2 = (Graphics2D) g.create();
+                        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                        g2.setColor(new Color(45, 45, 47));
+                        g2.fillRect(0, 0, getWidth(), getHeight());
+                        g2.setColor(Color.WHITE);
+                        int w = getWidth();
+                        int h = getHeight();
+                        int[] xPoints = {w / 2 - 4, w / 2 + 4, w / 2};
+                        int[] yPoints = {h / 2 - 2, h / 2 - 2, h / 2 + 3};
+                        g2.fillPolygon(xPoints, yPoints, 3);
+                        g2.dispose();
+                    }
+                };
+                button.setBackground(new Color(45, 45, 47));
+                button.setBorder(BorderFactory.createEmptyBorder());
+                button.setContentAreaFilled(false);
+                button.setFocusPainted(false);
+                button.setOpaque(true);
+                return button;
+            }
+
+            @Override
+            public void paintCurrentValueBackground(Graphics g, Rectangle bounds, boolean hasFocus) {
+                g.setColor(new Color(45, 45, 47));
+                g.fillRect(bounds.x, bounds.y, bounds.width, bounds.height);
             }
         });
 
-        Object popupObj = comboBox.getUI().getAccessibleChild(comboBox, 0);
-        if (popupObj instanceof JPopupMenu popup) {
-            popup.setBackground(new Color(28, 28, 30));
-            popup.setBorder(BorderFactory.createLineBorder(new Color(85, 85, 85)));
-        }
+        comboBox.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(70, 70, 70)),
+                BorderFactory.createEmptyBorder(2, 8, 2, 2)
+        ));
 
-        Component[] comps = comboBox.getComponents();
-        for (Component comp : comps) {
-            if (comp instanceof JButton button) {
-                button.setBackground(new Color(28, 28, 30));
-                button.setForeground(Color.WHITE);
+        comboBox.setRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(JList<?> list, Object value,
+                                                          int index, boolean isSelected, boolean cellHasFocus) {
+                Component c = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+                c.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+                if (isSelected) {
+                    setBackground(new Color(0, 122, 255));
+                    setForeground(Color.WHITE);
+                } else {
+                    setBackground(new Color(45, 45, 47));
+                    setForeground(Color.WHITE);
+                }
+                setBorder(BorderFactory.createEmptyBorder(6, 10, 6, 10));
+                return c;
             }
-        }
+        });
     }
 
     private void styleTextField(JTextField textField) {
@@ -275,7 +643,16 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
 
     private JTextField createStyledNumericField(String initialText) {
         JTextField field = new JTextField(initialText, 4);
-        styleTextField(field);
+        field.setPreferredSize(new Dimension(55, 34));
+        field.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        field.setBackground(new Color(45, 45, 47));
+        field.setForeground(Color.WHITE);
+        field.setCaretColor(Color.WHITE);
+        field.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(70, 70, 70)),
+                BorderFactory.createEmptyBorder(5, 5, 5, 5)
+        ));
+        field.setHorizontalAlignment(JTextField.CENTER);
         field.addKeyListener(new KeyAdapter() {
             @Override
             public void keyTyped(KeyEvent e) {
@@ -297,7 +674,7 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
     private JButton createStyledButton(String text) {
         JButton button = new JButton(text);
         button.setFont(new Font("Segoe UI", Font.BOLD, 12));
-        button.setPreferredSize(new Dimension(150, 40));
+        button.setPreferredSize(new Dimension(170, 40));
         button.setBackground(new Color(0, 122, 255));
         button.setForeground(Color.WHITE);
         button.setFocusPainted(false);
@@ -320,14 +697,13 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
     private void startKeyRecording() {
         if (!isRecordingKey) {
             isRecordingKey = true;
-            keyField.setText("Press any key...");
+            keyField.setText(isSpanish() ? "Presione cualquier tecla..." : "Press any key...");
             keyField.requestFocusInWindow();
 
             KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(new KeyEventDispatcher() {
                 @Override
                 public boolean dispatchKeyEvent(KeyEvent e) {
                     if (isRecordingKey && e.getID() == KeyEvent.KEY_PRESSED) {
-                        // Instead of using KeyEvent.getKeyText, we'll use our own mapping
                         String keyText = getStandardizedKeyText(e.getKeyCode());
                         keyField.setText(keyText);
                         isRecordingKey = false;
@@ -344,7 +720,7 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
     private void recordShortcut() {
         isRecordingShortcut = true;
         shortcutKeys.clear();
-        shortcutField.setText("Press key combination...");
+        shortcutField.setText(isSpanish() ? "Presione combinación de teclas..." : "Press key combination...");
 
         KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(new KeyEventDispatcher() {
             @Override
@@ -377,51 +753,107 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
         });
     }
 
-    private void toggleAction() {
+    public synchronized void toggleAction() {
         isRunning = !isRunning;
-        startStopButton.setText(isRunning ? "Stop" : "Start");
-        statusLabel.setText("Status: " + (isRunning ? "Running" : "Stopped"));
+        boolean es = isSpanish();
+        startStopButton.setText(isRunning ? (es ? "Detener" : "Stop") : (es ? "Iniciar" : "Start"));
+        statusLabel.setText((es ? "Estado: " : "Status: ") + (isRunning ? (es ? "En ejecución" : "Running") : (es ? "Detenido" : "Stopped")));
         statusLabel.setForeground(isRunning ? new Color(82, 196, 26) : new Color(255, 69, 58));
 
         if (isRunning) {
             int interval = calculateIntervalMilliseconds();
-            clickTimer = new Timer(interval, e -> performAction());
-            clickTimer.start();
-        } else if (clickTimer != null) {
-            clickTimer.stop();
+            boolean holdActive = holdCheckBox != null && holdCheckBox.isSelected();
+            int holdTime = holdActive ? calculateHoldMilliseconds() : 0;
+            int actionIdx = actionTypeComboBox.getSelectedIndex();
+            int clickIdx = clickTypeComboBox.getSelectedIndex();
+            String keyText = keyField.getText();
+
+            actionThread = new Thread(() -> runActionLoop(interval, holdTime, actionIdx, clickIdx, keyText), "AutoClicker-ActionThread");
+            actionThread.setDaemon(true);
+            actionThread.start();
+        } else {
+            stopAction();
         }
     }
 
-    private int calculateIntervalMilliseconds() {
-        int hours = Integer.parseInt(hourField.getText());
-        int minutes = Integer.parseInt(minuteField.getText());
-        int seconds = Integer.parseInt(secondField.getText());
-        int milliseconds = Integer.parseInt(millisecondField.getText());
-        return (hours * 3600 + minutes * 60 + seconds) * 1000 + milliseconds;
+    public synchronized void stopAction() {
+        isRunning = false;
+        if (actionThread != null) {
+            actionThread.interrupt();
+            actionThread = null;
+        }
+        releaseActiveInputs();
     }
 
-    private void performAction() {
-        if (!isRunning) return;
-
-        String actionType = (String) actionTypeComboBox.getSelectedItem();
-        if ("Click".equals(actionType)) {
-            int clickType = InputEvent.BUTTON1_DOWN_MASK;
-            if (Objects.equals(clickTypeComboBox.getSelectedItem(), "Middle Click")) {
-                clickType = InputEvent.BUTTON2_DOWN_MASK;
-            } else if (Objects.equals(clickTypeComboBox.getSelectedItem(), "Right Click")) {
-                clickType = InputEvent.BUTTON3_DOWN_MASK;
+    private synchronized void releaseActiveInputs() {
+        if (robot == null) return;
+        if (activeMousePress != -1) {
+            try {
+                robot.mouseRelease(activeMousePress);
+            } catch (Exception ignored) {
             }
-            robot.mousePress(clickType);
-            robot.delay(50);
-            robot.mouseRelease(clickType);
-        } else if ("Key Press".equals(actionType)) {
-            String keyText = keyField.getText();
-            if (!keyText.isEmpty() && !keyText.equals("Click to set key") && !keyText.equals("Press any key...")) {
+            activeMousePress = -1;
+        }
+        if (activeKeyPress != -1) {
+            try {
+                robot.keyRelease(activeKeyPress);
+            } catch (Exception ignored) {
+            }
+            activeKeyPress = -1;
+        }
+    }
+
+    private void runActionLoop(int interval, int holdTime, int actionIdx, int clickIdx, String keyText) {
+        try {
+            while (isRunning && !Thread.currentThread().isInterrupted()) {
+                if (interval > 0) {
+                    Thread.sleep(interval);
+                }
+                if (!isRunning || Thread.currentThread().isInterrupted()) {
+                    break;
+                }
+                performSingleAction(holdTime, actionIdx, clickIdx, keyText);
+            }
+        } catch (InterruptedException ignored) {
+        } finally {
+            releaseActiveInputs();
+        }
+    }
+
+    private void performSingleAction(int holdTime, int actionIdx, int clickIdx, String keyText) throws InterruptedException {
+        if (robot == null) return;
+        int holdDuration = (holdTime > 0) ? holdTime : 50;
+
+        if (actionIdx == 0) { // Mouse Click
+            int clickMask = InputEvent.BUTTON1_DOWN_MASK;
+            if (clickIdx == 1) {
+                clickMask = InputEvent.BUTTON2_DOWN_MASK;
+            } else if (clickIdx == 2) {
+                clickMask = InputEvent.BUTTON3_DOWN_MASK;
+            }
+
+            activeMousePress = clickMask;
+            robot.mousePress(clickMask);
+            try {
+                Thread.sleep(holdDuration);
+            } finally {
+                robot.mouseRelease(clickMask);
+                activeMousePress = -1;
+            }
+        } else if (actionIdx == 1) { // Key Press
+            if (keyText != null && !keyText.isEmpty()
+                    && !keyText.equals("Click to set key") && !keyText.equals("Click para asignar tecla")
+                    && !keyText.equals("Press any key...") && !keyText.equals("Presione cualquier tecla...")) {
                 int keyCode = getKeyCode(keyText);
                 if (keyCode != -1) {
+                    activeKeyPress = keyCode;
                     robot.keyPress(keyCode);
-                    robot.delay(50);
-                    robot.keyRelease(keyCode);
+                    try {
+                        Thread.sleep(holdDuration);
+                    } finally {
+                        robot.keyRelease(keyCode);
+                        activeKeyPress = -1;
+                    }
                 } else {
                     System.err.println("Invalid key: " + keyText);
                 }
@@ -429,7 +861,49 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
         }
     }
 
-    private int getKeyCode(String keyText) {
+    public static int parseNumber(String text) {
+        if (text == null) return 0;
+        try {
+            String trimmed = text.trim();
+            return trimmed.isEmpty() ? 0 : Integer.parseInt(trimmed);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    public static int calculateMilliseconds(int hours, int minutes, int seconds, int milliseconds) {
+        return (hours * 3600 + minutes * 60 + seconds) * 1000 + milliseconds;
+    }
+
+    public static int calculateMilliseconds(String hours, String minutes, String seconds, String milliseconds) {
+        return calculateMilliseconds(
+                parseNumber(hours),
+                parseNumber(minutes),
+                parseNumber(seconds),
+                parseNumber(milliseconds)
+        );
+    }
+
+    public int calculateIntervalMilliseconds() {
+        return calculateMilliseconds(
+                hourField != null ? hourField.getText() : "0",
+                minuteField != null ? minuteField.getText() : "0",
+                secondField != null ? secondField.getText() : "0",
+                millisecondField != null ? millisecondField.getText() : "0"
+        );
+    }
+
+    public int calculateHoldMilliseconds() {
+        return calculateMilliseconds(
+                holdHourField != null ? holdHourField.getText() : "0",
+                holdMinuteField != null ? holdMinuteField.getText() : "0",
+                holdSecondField != null ? holdSecondField.getText() : "0",
+                holdMillisecondField != null ? holdMillisecondField.getText() : "0"
+        );
+    }
+
+    public static int getKeyCode(String keyText) {
+        if (keyText == null) return -1;
         return switch (keyText) {
             case "Space" -> KeyEvent.VK_SPACE;
             case "Enter" -> KeyEvent.VK_ENTER;
@@ -446,6 +920,18 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
             case "Page Up" -> KeyEvent.VK_PAGE_UP;
             case "Page Down" -> KeyEvent.VK_PAGE_DOWN;
             case "Insert" -> KeyEvent.VK_INSERT;
+            case "F1" -> KeyEvent.VK_F1;
+            case "F2" -> KeyEvent.VK_F2;
+            case "F3" -> KeyEvent.VK_F3;
+            case "F4" -> KeyEvent.VK_F4;
+            case "F5" -> KeyEvent.VK_F5;
+            case "F6" -> KeyEvent.VK_F6;
+            case "F7" -> KeyEvent.VK_F7;
+            case "F8" -> KeyEvent.VK_F8;
+            case "F9" -> KeyEvent.VK_F9;
+            case "F10" -> KeyEvent.VK_F10;
+            case "F11" -> KeyEvent.VK_F11;
+            case "F12" -> KeyEvent.VK_F12;
             case "Control" -> KeyEvent.VK_CONTROL;
             case "Alt" -> KeyEvent.VK_ALT;
             case "Shift" -> KeyEvent.VK_SHIFT;
@@ -479,11 +965,19 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
     }
 
     private void updateActionOptions() {
-        String selectedAction = (String) actionTypeComboBox.getSelectedItem();
-        keyPanel.setVisible("Key Press".equals(selectedAction));
-        clickTypeComboBox.getParent().setVisible("Click".equals(selectedAction));
-        revalidate();
-        repaint();
+        if (actionTypeComboBox == null || actionDetailPanel == null) return;
+        int selectedIdx = actionTypeComboBox.getSelectedIndex();
+        boolean isKeyPress = (selectedIdx == 1);
+
+        if (clickTypeComboBox != null) clickTypeComboBox.setVisible(!isKeyPress);
+        if (keyField != null) keyField.setVisible(isKeyPress);
+
+        if (actionDetailBorder != null) {
+            actionDetailBorder.setTitle(isKeyPress ?
+                    (isSpanish() ? "Tecla a Pulsar" : "Key to Press") :
+                    (isSpanish() ? "Tipo de Click" : "Click Type"));
+        }
+        actionDetailPanel.repaint();
     }
 
     private void saveConfiguration() {
@@ -491,8 +985,15 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
         prefs.put("interval_minutes", minuteField.getText());
         prefs.put("interval_seconds", secondField.getText());
         prefs.put("interval_milliseconds", millisecondField.getText());
-        prefs.put("action_type", (String) actionTypeComboBox.getSelectedItem());
+        prefs.put("hold_hours", holdHourField.getText());
+        prefs.put("hold_minutes", holdMinuteField.getText());
+        prefs.put("hold_seconds", holdSecondField.getText());
+        prefs.put("hold_milliseconds", holdMillisecondField.getText());
+        prefs.putBoolean("hold_enabled", holdCheckBox.isSelected());
+        prefs.putInt("action_type_index", actionTypeComboBox.getSelectedIndex());
+        prefs.putInt("click_type_index", clickTypeComboBox.getSelectedIndex());
         prefs.put("shortcut", shortcutField.getText());
+        prefs.put("language", currentLanguage);
 
         StringBuilder shortcutKeysStr = new StringBuilder();
         for (Integer key : shortcutKeys) {
@@ -503,8 +1004,8 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
 
         JOptionPane.showMessageDialog(
                 this,
-                "Configuration saved successfully!",
-                "Success",
+                isSpanish() ? "¡Configuración guardada exitosamente!" : "Configuration saved successfully!",
+                isSpanish() ? "Éxito" : "Success",
                 JOptionPane.INFORMATION_MESSAGE
         );
     }
@@ -514,8 +1015,26 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
         minuteField.setText(prefs.get("interval_minutes", "0"));
         secondField.setText(prefs.get("interval_seconds", "1"));
         millisecondField.setText(prefs.get("interval_milliseconds", "0"));
-        actionTypeComboBox.setSelectedItem(prefs.get("action_type", "Click"));
-        shortcutField.setText(prefs.get("shortcut", ""));
+        holdHourField.setText(prefs.get("hold_hours", "0"));
+        holdMinuteField.setText(prefs.get("hold_minutes", "0"));
+        holdSecondField.setText(prefs.get("hold_seconds", "0"));
+        holdMillisecondField.setText(prefs.get("hold_milliseconds", "0"));
+
+        boolean holdEnabled = prefs.getBoolean("hold_enabled", false);
+        holdCheckBox.setSelected(holdEnabled);
+        holdPanelWrapper.setVisible(holdEnabled);
+
+        int actionIdx = prefs.getInt("action_type_index", 0);
+        if (actionIdx >= 0 && actionIdx < actionTypeComboBox.getItemCount()) {
+            actionTypeComboBox.setSelectedIndex(actionIdx);
+        }
+
+        int clickIdx = prefs.getInt("click_type_index", 0);
+        if (clickIdx >= 0 && clickIdx < clickTypeComboBox.getItemCount()) {
+            clickTypeComboBox.setSelectedIndex(clickIdx);
+        }
+
+        shortcutField.setText(prefs.get("shortcut", isSpanish() ? "Click en 'Asignar' para vincular" : "Click 'Set Shortcut' to bind"));
 
         String shortcutKeysStr = prefs.get("shortcut_keys", "");
         shortcutKeys.clear();
@@ -528,7 +1047,7 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
                 }
             }
         }
-        keyField.setText(prefs.get("key_to_press", "Click to set key"));
+        keyField.setText(prefs.get("key_to_press", isSpanish() ? "Click para asignar tecla" : "Click to set key"));
         updateActionOptions();
     }
 
@@ -637,7 +1156,8 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
             app.setVisible(true);
         });
     }
-    private String getStandardizedKeyText(int keyCode) {
+
+    public static String getStandardizedKeyText(int keyCode) {
         return switch (keyCode) {
             case KeyEvent.VK_SPACE -> "Space";
             case KeyEvent.VK_ENTER -> "Enter";
@@ -686,4 +1206,128 @@ public class AutoClickerApp extends JFrame implements NativeKeyListener {
             }
         };
     }
+
+    // Vector Gear Icon for Settings
+    private static class CogIcon implements Icon {
+        private final int width;
+        private final int height;
+
+        public CogIcon(int size) {
+            this.width = size;
+            this.height = size;
+        }
+
+        @Override
+        public void paintIcon(Component c, Graphics g, int x, int y) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setColor(c.getForeground());
+
+            double cx = x + width / 2.0;
+            double cy = y + height / 2.0;
+            double rOuter = width * 0.44;
+            double rInner = width * 0.33;
+            double rHole = width * 0.16;
+            int teeth = 8;
+
+            Path2D path = new Path2D.Double();
+            for (int i = 0; i < teeth; i++) {
+                double a0 = (i * 2.0 * Math.PI) / teeth;
+                double a1 = a0 + 0.15;
+                double a2 = a0 + (Math.PI / teeth) - 0.15;
+                double a3 = a0 + (Math.PI / teeth);
+                double a4 = ((i + 1) * 2.0 * Math.PI) / teeth;
+
+                double x0 = cx + rInner * Math.cos(a0);
+                double y0 = cy + rInner * Math.sin(a0);
+                double x1 = cx + rOuter * Math.cos(a1);
+                double y1 = cy + rOuter * Math.sin(a1);
+                double x2 = cx + rOuter * Math.cos(a2);
+                double y2 = cy + rOuter * Math.sin(a2);
+                double x3 = cx + rInner * Math.cos(a3);
+                double y3 = cy + rInner * Math.sin(a3);
+                double x4 = cx + rInner * Math.cos(a4);
+                double y4 = cy + rInner * Math.sin(a4);
+
+                if (i == 0) {
+                    path.moveTo(x0, y0);
+                } else {
+                    path.lineTo(x0, y0);
+                }
+                path.lineTo(x1, y1);
+                path.lineTo(x2, y2);
+                path.lineTo(x3, y3);
+                path.lineTo(x4, y4);
+            }
+            path.closePath();
+
+            Area gear = new Area(path);
+            gear.subtract(new Area(new Ellipse2D.Double(cx - rHole, cy - rHole, rHole * 2, rHole * 2)));
+
+            g2.fill(gear);
+            g2.dispose();
+        }
+
+        @Override
+        public int getIconWidth() {
+            return width;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return height;
+        }
+    }
+
+    // Vector Checkmark Icon for Option Menu Items
+    private static class CheckIcon implements Icon {
+        private final boolean checked;
+
+        public CheckIcon(boolean checked) {
+            this.checked = checked;
+        }
+
+        @Override
+        public void paintIcon(Component c, Graphics g, int x, int y) {
+            if (!checked) return;
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setColor(c.getForeground());
+            g2.setStroke(new BasicStroke(2.0f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g2.drawLine(x + 2, y + 8, x + 5, y + 12);
+            g2.drawLine(x + 5, y + 12, x + 12, y + 3);
+            g2.dispose();
+        }
+
+        @Override
+        public int getIconWidth() {
+            return 14;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return 14;
+        }
+    }
+
+    // Getters for testing and programmatic inspection
+    public JTextField getHourField() { return hourField; }
+    public JTextField getMinuteField() { return minuteField; }
+    public JTextField getSecondField() { return secondField; }
+    public JTextField getMillisecondField() { return millisecondField; }
+    public JTextField getHoldHourField() { return holdHourField; }
+    public JTextField getHoldMinuteField() { return holdMinuteField; }
+    public JTextField getHoldSecondField() { return holdSecondField; }
+    public JTextField getHoldMillisecondField() { return holdMillisecondField; }
+    public JComboBox<String> getActionTypeComboBox() { return actionTypeComboBox; }
+    public JComboBox<String> getClickTypeComboBox() { return clickTypeComboBox; }
+    public JTextField getKeyField() { return keyField; }
+    public JPanel getActionDetailPanel() { return actionDetailPanel; }
+    public JButton getStartStopButton() { return startStopButton; }
+    public JLabel getStatusLabel() { return statusLabel; }
+    public JCheckBox getHoldCheckBox() { return holdCheckBox; }
+    public JPanel getHoldPanelWrapper() { return holdPanelWrapper; }
+    public boolean isRunning() { return isRunning; }
+    public int getActiveMousePress() { return activeMousePress; }
+    public int getActiveKeyPress() { return activeKeyPress; }
 }
